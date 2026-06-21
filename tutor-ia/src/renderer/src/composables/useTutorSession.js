@@ -1,20 +1,17 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { SpeechToText } from '../voice/stt.js'
-import { TextToSpeech } from '../voice/tts.js' 
+import { TextToSpeech } from '../voice/tts.js'
+import { HandTracker } from '../vision/HandTracker.js' 
 
-/**
- * @param {Object} deps
- * @param {import('vue').Ref<HTMLCanvasElement|null>} deps.canvasRef
- * @param {(estado: string, opts?: { onComplete?: () => void }) => void} deps.setAvatarEstado
- */
-export function useTutorSession({ canvasRef, setAvatarEstado }) {
+export function useTutorSession({ canvasRef, debugCanvasRef, setAvatarEstado }) {
     const status = ref('Iniciando sistema...')
     const micActive = ref(false)
     const micEmoji = ref('🎤')
+    const modoRatonActivo = ref(false) 
 
     const grabadora = new SpeechToText()
-    // 2. Instanciamos el nuevo motor de ElevenLabs
     const tts = new TextToSpeech() 
+    let handTracker = null; 
     
     let isRecording = false
     let secuenciaActual = []
@@ -30,12 +27,11 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
     }
 
     // ---------------------------------------------------------------------
-    // DIBUJO EN CANVAS (Sin cambios)
+    // MOTOR GRÁFICO DEL CANVAS (Sin cambios)
     // ---------------------------------------------------------------------
     function animarDibujo(dibujo, duracionMs, onComplete) {
         const context = getCtx()
         if (!context) {
-            console.error('⚠️ No se puede dibujar: el canvas todavía no está montado.')
             onComplete?.()
             return
         }
@@ -122,16 +118,8 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // ORQUESTACIÓN: texto + dibujo sincronizados, paso a paso
-    // ---------------------------------------------------------------------
     async function procesarContratoInterfaz(data) {
-        console.log('Contrato recibido:', data)
-
-        if (data.avatar_estado) {
-            setAvatarEstado(data.avatar_estado)
-        }
-
+        if (data.avatar_estado) setAvatarEstado(data.avatar_estado)
         if (animFrameId) cancelAnimationFrame(animFrameId)
 
         if (data.secuencia && Array.isArray(data.secuencia)) {
@@ -142,13 +130,10 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
         }
 
         if (data.texto_a_hablar || data.pasos_dibujo) {
-            console.warn('⚠️ El agente sigue enviando el formato viejo (texto_a_hablar/pasos_dibujo). Sin sincronización fina hasta migrar el prompt al formato "secuencia".')
-
             if (data.texto_a_hablar) {
                 status.value = data.texto_a_hablar
                 setAvatarEstado('hablando')
                 try {
-                    // 3. Uso simple para el fallback
                     await tts.speak(data.texto_a_hablar) 
                 } catch (e) {
                     console.error("Error TTS fallback:", e)
@@ -170,7 +155,6 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
         }
     }
 
-    // 4. Convertimos a async para esperar a que termine ElevenLabs
     async function ejecutarSiguientePaso() {
         if (pasoActualIndex >= secuenciaActual.length) {
             setAvatarEstado('reposo')
@@ -183,21 +167,17 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
 
         if (paso.texto) {
             status.value = paso.texto
-
             const palabras = paso.texto.split(/\s+/).length
             const duracionEstimadaMs = (palabras / 2.5) * 1000
 
-            // Disparamos la animación del dibujo en paralelo
             if (paso.dibujo) animarDibujo(paso.dibujo, duracionEstimadaMs)
 
             try {
-                // Hacemos una pausa en la ejecución hasta que el audio termine
                 await tts.speak(paso.texto)
             } catch (error) {
-                console.error("Error reproduciendo paso TTS:", error)
+                console.error("Error TTS:", error)
             }
 
-            // Cuando termina la promesa (el audio), finalizamos el dibujo y avanzamos
             if (paso.dibujo) {
                 if (animFrameId) cancelAnimationFrame(animFrameId)
                 dibujarPasoConProgreso(paso.dibujo, 1)
@@ -219,15 +199,27 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
     }
 
     // ---------------------------------------------------------------------
-    // VOZ (WALKIE-TALKIE: mantener barra espaciadora)
+    // VISIÓN Y VOZ (INTERACCIÓN)
     // ---------------------------------------------------------------------
-    async function manejarKeydown(event) {
-        if (event.code === 'Space' && !isRecording) {
+    function moverCursorVirtual(x, y) {
+        if (!modoRatonActivo.value) return;
+        
+        const pixelX = x * window.innerWidth;
+        const pixelY = y * window.innerHeight;
+        
+        const cursor = document.getElementById('cursor-virtual');
+        if (cursor) {
+            cursor.style.transform = `translate(${pixelX - 12}px, ${pixelY - 12}px)`;
+        }
+    }
+
+    async function iniciarEscuchaPorMano() {
+        if (!isRecording) {
             isRecording = true
-            status.value = 'Te escucho...'
+            status.value = 'Mano levantada. Te escucho...'
             setAvatarEstado('escuchando')
             micActive.value = true
-            micEmoji.value = '🎙️'
+            micEmoji.value = '✋🎙️' 
 
             try {
                 await grabadora.startRecording()
@@ -240,21 +232,35 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
         }
     }
 
-    async function manejarKeyup(event) {
-        if (event.code === 'Space' && isRecording) {
+    async function detenerEscuchaPorMano() {
+        if (isRecording) {
             isRecording = false
             micActive.value = false
             micEmoji.value = '🎤'
-
             status.value = 'Transcribiendo...'
             setAvatarEstado('pensando')
 
             try {
                 const textoTranscrito = await grabadora.stopRecordingAndTranscribe()
+                const textoMin = textoTranscrito.toLowerCase();
                 status.value = `Tú: "${textoTranscrito}"\n\nAnalizando...`
 
-                const respuesta = await window.electronAPI.enviarMensajeAlAgente(textoTranscrito)
+                if (textoMin.includes('activar ratón') || textoMin.includes('activar raton') || textoMin.includes('usar pizarra')) {
+                    modoRatonActivo.value = true;
+                    status.value = '¡Modo ratón activado! Mueve tu dedo índice.';
+                    await tts.speak("Modo ratón activado. Usa tu dedo índice para apuntar.");
+                    setAvatarEstado('reposo')
+                    return; 
+                }
 
+                if (textoMin.includes('desactivar ratón') || textoMin.includes('desactivar raton')) {
+                    modoRatonActivo.value = false;
+                    await tts.speak("Modo ratón desactivado.");
+                    setAvatarEstado('reposo')
+                    return;
+                }
+
+                const respuesta = await window.electronAPI.enviarMensajeAlAgente(textoTranscrito)
                 if (respuesta.success) {
                     procesarContratoInterfaz(respuesta.data)
                 } else {
@@ -273,38 +279,34 @@ export function useTutorSession({ canvasRef, setAvatarEstado }) {
     // ---------------------------------------------------------------------
     async function bootstrap() {
         try {
-            // 5. Inicializamos TTS junto con los demás servicios
             await tts.init()
             
-            grabadora.apiKey = await window.electronAPI.getGroqKey()
-            if (!grabadora.apiKey) console.warn('Falta clave de Groq en .env')
+            const videoEl = document.createElement('video');
+            videoEl.style.display = 'none';
+            document.body.appendChild(videoEl);
 
+            handTracker = new HandTracker(videoEl, debugCanvasRef.value, {
+                onHandRaised: iniciarEscuchaPorMano,
+                onHandLowered: detenerEscuchaPorMano,
+                onFingerMove: moverCursorVirtual
+            });
+            await handTracker.init();
+
+            grabadora.apiKey = await window.electronAPI.getGroqKey()
+            
             const inicial = await window.electronAPI.inicializarTutor()
             if (inicial.success) {
                 procesarContratoInterfaz(inicial.data)
-            } else {
-                status.value = 'Error al iniciar: ' + inicial.error
             }
         } catch (e) {
             console.error('Fallo crítico en inicialización:', e)
         }
     }
     
-    onMounted(() => {
-        window.addEventListener('keydown', manejarKeydown)
-        window.addEventListener('keyup', manejarKeyup)
-    })
-
     onUnmounted(() => {
-        window.removeEventListener('keydown', manejarKeydown)
-        window.removeEventListener('keyup', manejarKeyup)
         if (animFrameId) cancelAnimationFrame(animFrameId)
-        
-        // Detener audio de ElevenLabs si se desmonta el componente
-        if (tts.currentAudio) {
-            tts.currentAudio.pause();
-        }
+        if (tts.currentAudio) tts.currentAudio.pause();
     })
 
-    return { status, micActive, micEmoji, bootstrap }
+    return { status, micActive, micEmoji, bootstrap, modoRatonActivo }
 }
