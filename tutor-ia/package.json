@@ -41,6 +41,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
     "dotenv": "^17.4.2",
+    "mermaid": "^11.15.0",
+    "svg-pan-zoom": "^3.6.2",
     "vue": "^3.5.38"
   }
 }
