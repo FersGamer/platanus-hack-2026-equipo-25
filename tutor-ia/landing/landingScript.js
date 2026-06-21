@@ -50,7 +50,12 @@ tailwind.config = {
                 "surface-container": "#f1edec",
                 "outline-variant": "#c4c7c7",
                 "inverse-on-surface": "#f4f0ef",
-                "primary-container": "#333333"
+                "primary-container": "#333333",
+
+                // Paleta verde ZenZen (acento de marca)
+                "zen-green": "#4F8A5B",
+                "zen-green-dark": "#3A6B45",
+                "zen-green-light": "#E8F4EA"
             },
             "borderRadius": {
                 "DEFAULT": "0.25rem",
@@ -84,4 +89,3 @@ tailwind.config = {
         },
     },
 };
-
