@@ -4,32 +4,32 @@
  * @architecture Orientada a Servicios
  */
 
-const { app, BrowserWindow, session, ipcMain } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const Anthropic = require('@anthropic-ai/sdk');
-require('dotenv').config();
+const { app, BrowserWindow, session, ipcMain } = require("electron");
+const path = require("path");
+const fs = require("fs");
+const Anthropic = require("@anthropic-ai/sdk");
+require("dotenv").config();
 
 // ============================================================================
 // [CONFIG] CAPA DE CONFIGURACIÓN
 // ============================================================================
 const CONFIG = {
   MODELS: {
-    DEV: "claude-haiku-4-5-20251001",   // Modo Ahorro ($50 USD de presupuesto)
-    JUECES: "claude-sonnet-4-6",        // Modo Pitch (Calidad pedagógica premium)
+    DEV: "claude-haiku-4-5-20251001", // Modo Ahorro ($50 USD de presupuesto)
+    JUECES: "claude-sonnet-4-6", // Modo Pitch (Calidad pedagógica premium)
   },
 
   ACTIVE_MODEL: "claude-haiku-4-5-20251001",
-  
+
   WINDOW: { width: 1050, height: 750 },
   PATHS: {
-    RENDER_HTML: path.join(__dirname, '..', 'renderer', 'index.html'),
-    PRELOAD_JS: path.join(__dirname, '..', 'preload', 'index.js'),
+    RENDER_HTML: path.join(__dirname, "..", "renderer", "index.html"),
+    PRELOAD_JS: path.join(__dirname, "..", "preload", "index.js"),
     // Si está empaquetada, usa la ruta segura del OS. Si no, usa tu carpeta local para que las veas en VS Code.
-    NOTES_DIR: app.isPackaged 
-      ? path.join(app.getPath('userData'), 'notas') 
-      : path.join(__dirname, '..', '..', 'notas')
-  }
+    NOTES_DIR: app.isPackaged
+      ? path.join(app.getPath("userData"), "notas")
+      : path.join(__dirname, "..", "..", "notas"),
+  },
 };
 
 // ============================================================================
@@ -57,9 +57,9 @@ class StorageService {
    * Guarda una nota larga en Markdown (Libreta física del alumno)
    */
   saveMarkdownNote(contenido) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filePath = path.join(this.baseDir, `nota_${timestamp}.md`);
-    fs.writeFileSync(filePath, contenido, 'utf-8');
+    fs.writeFileSync(filePath, contenido, "utf-8");
     return filePath;
   }
 
@@ -180,9 +180,9 @@ class TutorSchemas {
                 contenido: { type: "string" },
                 color: { type: "string" }
               },
-              required: ["comando"]
-            }
-          }
+              required: ["comando"],
+            },
+          },
         },
         required: ["texto_a_hablar", "avatar_estado"]
       }
@@ -192,14 +192,18 @@ class TutorSchemas {
   static getSaveNotesTool() {
     return {
       name: "guardar_apuntes",
-      description: "Crea un archivo .md en el disco del usuario con un resumen de valor de la lección.",
+      description:
+        "Crea un archivo .md en el disco del usuario con un resumen de valor de la lección.",
       input_schema: {
         type: "object",
         properties: {
-          contenido_markdown: { type: "string", description: "Apuntes en formato Markdown." }
+          contenido_markdown: {
+            type: "string",
+            description: "Apuntes en formato Markdown.",
+          },
         },
-        required: ["contenido_markdown"]
-      }
+        required: ["contenido_markdown"],
+      },
     };
   }
 }
@@ -343,12 +347,12 @@ class WindowManager {
       webPreferences: {
         preload: this.config.PATHS.PRELOAD_JS,
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
       },
     });
 
-    if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
-      this.win.loadURL(process.env['ELECTRON_RENDERER_URL']);
+    if (!app.isPackaged && process.env["ELECTRON_RENDERER_URL"]) {
+      this.win.loadURL(process.env["ELECTRON_RENDERER_URL"]);
     } else {
       this.win.loadFile(this.config.PATHS.RENDER_HTML);
     }
@@ -369,7 +373,7 @@ class AppOrchestrator {
 
   _registerIPCCheckpoints() {
     // 1. Checkpoint de bienvenida (Arranque limpio)
-    ipcMain.handle('inicializar-tutor', async () => {
+    ipcMain.handle("inicializar-tutor", async () => {
       try {
         // CORRECCIÓN: Usamos getActivePostIts en lugar del viejo getPastTopics
         const postits = this.storage.getActivePostIts();
@@ -384,9 +388,15 @@ class AppOrchestrator {
             avatar_estado: "reposo",
             pasos_dibujo: [
               { comando: "limpiar" },
-              { comando: "texto", x: 50, y: 100, contenido: "¿Qué aprenderemos hoy?", color: "#4f46e5" }
-            ]
-          }
+              {
+                comando: "texto",
+                x: 50,
+                y: 100,
+                contenido: "¿Qué aprenderemos hoy?",
+                color: "#4f46e5",
+              },
+            ],
+          },
         };
       } catch (error) {
         return { success: false, error: error.message };
@@ -394,7 +404,7 @@ class AppOrchestrator {
     });
 
     // 2. Checkpoint de conversación (Interacción con Claude)
-    ipcMain.handle('chat-with-agent', async (event, promptUsuario) => {
+    ipcMain.handle("chat-with-agent", async (event, promptUsuario) => {
       try {
         const uiJsonPayload = await this.agent.processUserPrompt(promptUsuario);
         return { success: true, data: uiJsonPayload };
@@ -404,10 +414,15 @@ class AppOrchestrator {
       }
     });
 
-    // 3. [TU CÓDIGO AÑADIDO] Checkpoint para el motor de voz (Groq)
-    ipcMain.handle('get-groq-key', () => {
+    // 3. Checkpoint para el motor de voz (Groq)
+    ipcMain.handle("get-groq-key", () => {
       // Asegúrate de que process.env.GROQ_API_KEY esté definido arriba en su archivo
-      return process.env.GROQ_API_KEY; 
+      return process.env.GROQ_API_KEY;
+    });
+
+    // 4. Checkpoint para el motor de voz (ElevenLabs)
+    ipcMain.handle("get-elevenlabs-key", () => {
+      return process.env.ELEVENLABS_API_KEY;
     });
   }
 
@@ -415,11 +430,13 @@ class AppOrchestrator {
     app.whenReady().then(() => {
       this.windowManager.init();
       this._registerIPCCheckpoints();
-      console.log(`[Orquestador Boot] Listo. Modelo en uso: ${CONFIG.ACTIVE_MODEL}`);
+      console.log(
+        `[Orquestador Boot] Listo. Modelo en uso: ${CONFIG.ACTIVE_MODEL}`,
+      );
     });
 
-    app.on('window-all-closed', () => {
-      if (process.platform !== 'darwin') app.quit();
+    app.on("window-all-closed", () => {
+      if (process.platform !== "darwin") app.quit();
     });
   }
 }

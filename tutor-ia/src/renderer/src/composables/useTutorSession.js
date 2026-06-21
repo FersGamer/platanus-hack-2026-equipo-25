@@ -1,4 +1,7 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { SpeechToText } from '../voice/stt.js'
+import { TextToSpeech } from '../voice/tts.js'
+import { HandTracker } from '../vision/HandTracker.js' 
 import mermaid from 'mermaid'
 import { SpeechToText } from '../voice/stt.js'
 import svgPanZoom from 'svg-pan-zoom'
@@ -10,15 +13,18 @@ import svgPanZoom from 'svg-pan-zoom'
  * @param {import('vue').Ref<HTMLElement|null>} deps.codeBlockRef
  * @param {(estado: string) => void} deps.setAvatarEstado
  */
-export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, setAvatarEstado }) {
+export function useTutorSession({ canvasRef, debugCanvasRef, setAvatarEstado }) {
     const status = ref('Iniciando sistema...')
     const micActive = ref(false)
     const micEmoji = ref('🎤')
+    const modoRatonActivo = ref(false) 
     const activeMode = ref('canvas')
     const codeLanguage = ref('txt')
     const codeContent = ref('')
-
     const grabadora = new SpeechToText()
+    const tts = new TextToSpeech() 
+    let handTracker = null; 
+    
     let isRecording = false
     let secuenciaActual = []
     let pasoActualIndex = 0
@@ -168,12 +174,11 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
     }
 
     // ---------------------------------------------------------------------
-    // DIBUJO EN CANVAS
+    // MOTOR GRÁFICO DEL CANVAS (Sin cambios)
     // ---------------------------------------------------------------------
     function animarDibujo(dibujo, duracionMs, onComplete) {
         const context = getCtx()
         if (!context) {
-            console.error('⚠️ No se puede dibujar: el canvas todavía no está montado.')
             onComplete?.()
             return
         }
@@ -206,7 +211,6 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
             case 'limpiar':
                 context.clearRect(0, 0, canvasEl.width, canvasEl.height)
                 break
-
             case 'linea': {
                 const xActual = paso.x + (paso.x2 - paso.x) * progreso
                 const yActual = paso.y + (paso.y2 - paso.y) * progreso
@@ -216,7 +220,6 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
                 context.stroke()
                 break
             }
-
             case 'circulo': {
                 const anguloActual = (2 * Math.PI) * progreso
                 context.beginPath()
@@ -224,7 +227,6 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
                 context.stroke()
                 break
             }
-
             case 'rectangulo': {
                 context.beginPath()
                 if (progreso < 0.25) {
@@ -249,7 +251,6 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
                 context.stroke()
                 break
             }
-
             case 'texto': {
                 if (paso.contenido) {
                     const caracteresMostrar = Math.floor(paso.contenido.length * progreso)
@@ -311,7 +312,6 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
             return
         }
 
-        // Compatibilidad con el formato viejo: { texto_a_hablar, pasos_dibujo }
         if (data.texto_a_hablar || data.pasos_dibujo) {
             console.warn('⚠️ El agente sigue enviando el formato viejo (texto_a_hablar/pasos_dibujo).')
             if (data.texto_a_hablar) {
@@ -340,7 +340,7 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
         }
     }
 
-    function ejecutarSiguientePaso() {
+    async function ejecutarSiguientePaso() {
         if (pasoActualIndex >= secuenciaActual.length) {
             setAvatarEstado('reposo')
             status.value = ''
@@ -352,35 +352,25 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
 
         if (paso.texto) {
             status.value = paso.texto
-
-            const utterance = new SpeechSynthesisUtterance(paso.texto)
-            utterance.lang = 'es-MX'
-            utterance.rate = 1.05
-
             const palabras = paso.texto.split(/\s+/).length
             const duracionEstimadaMs = (palabras / 2.5) * 1000
 
-            utterance.onstart = () => {
-                if (paso.dibujo) animarDibujo(paso.dibujo, duracionEstimadaMs)
+            if (paso.dibujo) animarDibujo(paso.dibujo, duracionEstimadaMs)
+
+            try {
+                await tts.speak(paso.texto)
+            } catch (error) {
+                console.error("Error TTS:", error)
             }
 
-            utterance.onend = () => {
-                if (paso.dibujo) {
-                    if (animFrameId) cancelAnimationFrame(animFrameId)
-                    dibujarPasoConProgreso(paso.dibujo, 1)
-                }
-                setAvatarEstado('reposo')
-                pasoActualIndex++
-                ejecutarSiguientePaso()
+            if (paso.dibujo) {
+                if (animFrameId) cancelAnimationFrame(animFrameId)
+                dibujarPasoConProgreso(paso.dibujo, 1)
             }
-
-            utterance.onerror = () => {
-                setAvatarEstado('reposo')
-                pasoActualIndex++
-                ejecutarSiguientePaso()
-            }
-
-            window.speechSynthesis.speak(utterance)
+            
+            setAvatarEstado('reposo')
+            pasoActualIndex++
+            ejecutarSiguientePaso()
 
         } else if (paso.dibujo) {
             animarDibujo(paso.dibujo, 600, () => {
@@ -394,16 +384,27 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
     }
 
     // ---------------------------------------------------------------------
-    // VOZ (WALKIE-TALKIE: mantener barra espaciadora)
+    // VISIÓN Y VOZ (INTERACCIÓN)
     // ---------------------------------------------------------------------
-    async function manejarKeydown(event) {
-        if (event.code === 'Space' && !isRecording) {
-            window.speechSynthesis.cancel()
+    function moverCursorVirtual(x, y) {
+        if (!modoRatonActivo.value) return;
+        
+        const pixelX = x * window.innerWidth;
+        const pixelY = y * window.innerHeight;
+        
+        const cursor = document.getElementById('cursor-virtual');
+        if (cursor) {
+            cursor.style.transform = `translate(${pixelX - 12}px, ${pixelY - 12}px)`;
+        }
+    }
+
+    async function iniciarEscuchaPorMano() {
+        if (!isRecording) {
             isRecording = true
-            status.value = 'Te escucho...'
+            status.value = 'Mano levantada. Te escucho...'
             setAvatarEstado('escuchando')
             micActive.value = true
-            micEmoji.value = '🎙️'
+            micEmoji.value = '✋🎙️' 
 
             try {
                 await grabadora.startRecording()
@@ -416,21 +417,35 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
         }
     }
 
-    async function manejarKeyup(event) {
-        if (event.code === 'Space' && isRecording) {
+    async function detenerEscuchaPorMano() {
+        if (isRecording) {
             isRecording = false
             micActive.value = false
             micEmoji.value = '🎤'
-
             status.value = 'Transcribiendo...'
             setAvatarEstado('pensando')
 
             try {
                 const textoTranscrito = await grabadora.stopRecordingAndTranscribe()
+                const textoMin = textoTranscrito.toLowerCase();
                 status.value = `Tú: "${textoTranscrito}"\n\nAnalizando...`
 
-                const respuesta = await window.electronAPI.enviarMensajeAlAgente(textoTranscrito)
+                if (textoMin.includes('activar ratón') || textoMin.includes('activar raton') || textoMin.includes('usar pizarra')) {
+                    modoRatonActivo.value = true;
+                    status.value = '¡Modo ratón activado! Mueve tu dedo índice.';
+                    await tts.speak("Modo ratón activado. Usa tu dedo índice para apuntar.");
+                    setAvatarEstado('reposo')
+                    return; 
+                }
 
+                if (textoMin.includes('desactivar ratón') || textoMin.includes('desactivar raton')) {
+                    modoRatonActivo.value = false;
+                    await tts.speak("Modo ratón desactivado.");
+                    setAvatarEstado('reposo')
+                    return;
+                }
+
+                const respuesta = await window.electronAPI.enviarMensajeAlAgente(textoTranscrito)
                 if (respuesta.success) {
                     await procesarContratoInterfaz(respuesta.data)
                 } else {
@@ -449,9 +464,21 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
     // ---------------------------------------------------------------------
     async function bootstrap() {
         try {
-            grabadora.apiKey = await window.electronAPI.getGroqKey()
-            if (!grabadora.apiKey) console.warn('Falta clave de Groq en .env')
+            await tts.init()
+            
+            const videoEl = document.createElement('video');
+            videoEl.style.display = 'none';
+            document.body.appendChild(videoEl);
 
+            handTracker = new HandTracker(videoEl, debugCanvasRef.value, {
+                onHandRaised: iniciarEscuchaPorMano,
+                onHandLowered: detenerEscuchaPorMano,
+                onFingerMove: moverCursorVirtual
+            });
+            await handTracker.init();
+
+            grabadora.apiKey = await window.electronAPI.getGroqKey()
+            
             const inicial = await window.electronAPI.inicializarTutor()
             if (inicial.success) {
                 await procesarContratoInterfaz(inicial.data)
@@ -463,16 +490,9 @@ export function useTutorSession({ canvasRef, mermaidContainerRef, codeBlockRef, 
         }
     }
     
-    onMounted(() => {
-        window.addEventListener('keydown', manejarKeydown)
-        window.addEventListener('keyup', manejarKeyup)
-    })
-
     onUnmounted(() => {
-        window.removeEventListener('keydown', manejarKeydown)
-        window.removeEventListener('keyup', manejarKeyup)
         if (animFrameId) cancelAnimationFrame(animFrameId)
-        window.speechSynthesis.cancel()
+        if (tts.currentAudio) tts.currentAudio.pause();
     })
 
     return { status, micActive, micEmoji, activeMode, codeLanguage, codeContent, bootstrap }

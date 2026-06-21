@@ -169,7 +169,10 @@ class TutorSchemas {
       input_schema: {
         type: "object",
         properties: {
-          contenido_markdown: { type: "string", description: "Apuntes en formato Markdown." }
+          contenido_markdown: {
+            type: "string",
+            description: "Apuntes en formato Markdown."
+          }
         },
         required: ["contenido_markdown"]
       }
@@ -275,7 +278,9 @@ class WindowManager {
     this.win = null;
   }
   init() {
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => callback(true));
+    session.defaultSession.setPermissionRequestHandler(
+      (webContents, permission, callback) => callback(true)
+    );
     this.win = new BrowserWindow({
       width: this.config.WINDOW.width,
       height: this.config.WINDOW.height,
@@ -311,7 +316,13 @@ class AppOrchestrator {
             avatar_estado: "reposo",
             pasos_dibujo: [
               { comando: "limpiar" },
-              { comando: "texto", x: 50, y: 100, contenido: "¿Qué aprenderemos hoy?", color: "#4f46e5" }
+              {
+                comando: "texto",
+                x: 50,
+                y: 100,
+                contenido: "¿Qué aprenderemos hoy?",
+                color: "#4f46e5"
+              }
             ]
           }
         };
@@ -331,12 +342,17 @@ class AppOrchestrator {
     ipcMain.handle("get-groq-key", () => {
       return process.env.GROQ_API_KEY;
     });
+    ipcMain.handle("get-elevenlabs-key", () => {
+      return process.env.ELEVENLABS_API_KEY;
+    });
   }
   start() {
     app.whenReady().then(() => {
       this.windowManager.init();
       this._registerIPCCheckpoints();
-      console.log(`[Orquestador Boot] Listo. Modelo en uso: ${CONFIG.ACTIVE_MODEL}`);
+      console.log(
+        `[Orquestador Boot] Listo. Modelo en uso: ${CONFIG.ACTIVE_MODEL}`
+      );
     });
     app.on("window-all-closed", () => {
       if (process.platform !== "darwin") app.quit();

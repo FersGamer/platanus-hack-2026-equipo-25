@@ -1,30 +1,47 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useAvatarAnimation } from './composables/useAvatarAnimation'
-import { useTutorSession } from './composables/useTutorSession'
+import { ref, onMounted, onUnmounted } from "vue";
+import { useAvatarAnimation } from "./composables/useAvatarAnimation";
+import { useTutorSession } from "./composables/useTutorSession";
 
-const pizarraContainer = ref(null)
-// Refs para inyectar en el composable
-const canvasRef = ref(null)
-const mermaidContainerRef = ref(null)
-const codeBlockRef = ref(null)
+const pizarraContainer = ref(null);
+const canvas = ref(null);
+const debugCanvas = ref(null);
+const mostrarVision = ref(false);
 
-const { avatarSrc, avatarPos, cargarManifest, setAvatarEstado, iniciarFlotacion } = useAvatarAnimation()
+const {
+  avatarSrc,
+  avatarPos,
+  cargarManifest,
+  setAvatarEstado,
+  iniciarFlotacion,
+} = useAvatarAnimation();
 
-// Extraemos las nuevas variables reactivas del composable
-const { status, micActive, micEmoji, activeMode, codeLanguage, codeContent, bootstrap } = useTutorSession({ 
-  canvasRef, 
-  mermaidContainerRef,
-  codeBlockRef,
-  setAvatarEstado 
-})
+const { status, micActive, micEmoji, bootstrap, modoRatonActivo } =
+  useTutorSession({
+    canvasRef: canvas,
+    debugCanvasRef: debugCanvas,
+    setAvatarEstado,
+  });
+
+// Función que escucha el teclado
+function manejarAtajoVision(e) {
+  // Si presionas la 'v' o 'V', se alterna la ventana
+  if (e.key.toLowerCase() === "v") {
+    mostrarVision.value = !mostrarVision.value;
+  }
+}
 
 onMounted(async () => {
-  await cargarManifest()
-  setAvatarEstado('hablando')
-  iniciarFlotacion(pizarraContainer)
-  await bootstrap()
-})
+  window.addEventListener("keydown", manejarAtajoVision); // 👉 Activamos el atajo
+  await cargarManifest();
+  setAvatarEstado("hablando");
+  iniciarFlotacion(pizarraContainer);
+  await bootstrap();
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", manejarAtajoVision); // 👉 Limpiamos memoria
+});
 </script>
 
 <template>
@@ -37,6 +54,15 @@ onMounted(async () => {
   </header>
 
   <main class="board-wrapper">
+    <div ref="pizarraContainer" id="pizarra-container">
+      <canvas ref="canvas" width="1400" height="800"></canvas>
+      <img class="avatar-float" :src="avatarSrc" :style="{ top: avatarPos.top + 'px', left: avatarPos.left + 'px' }"
+        alt="ZenZen" />
+    </div>
+  </main>
+
+ 
+</template>
     <div ref="pizarraContainer" id="pizarra-container" class="pizarra-root">
       
       <canvas 
@@ -75,7 +101,6 @@ onMounted(async () => {
 <style scoped>
 /* =========================================================
    ANIMACIONES DE MERMAID (Solo funcionan aquí en Vue)
-========================================================= */
 
 /* Hacemos que las flechas se dibujen solas de inicio a fin */
 :deep(.mermaid .edgePath .path) {
