@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, session, ipcMain } = require("electron");
+const { app, BrowserWindow, Tray, Menu, session, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const Anthropic = require("@anthropic-ai/sdk");
